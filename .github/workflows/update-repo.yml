@@ -4,6 +4,10 @@ on:
     - cron: '0 0 * * *' # Midnight daily
   workflow_dispatch:      # Manual trigger
 
+env:
+  # This fixes the Node.js deprecation warning
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+
 jobs:
   update:
     runs-on: ubuntu-latest
@@ -16,28 +20,43 @@ jobs:
 
       - name: Setup Environment
         run: |
+          # Install official base tools
           pacman -Syu --noconfirm git base-devel sudo
+          
+          # Setup builduser (makepkg cannot run as root)
           useradd -m builduser
           echo "builduser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builduser
-          # This allows the builduser to use the workspace
+          
+          # Fix git ownership issues in containers
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           chown -R builduser:builduser .
 
       - name: Install aurutils (Bootstrap)
         run: |
-          sudo -u builduser bash -c "cd /tmp && git clone https://aur.archlinux.org/aurutils.git && cd aurutils && makepkg -si --noconfirm"
+          # Manually build aurutils from the AUR so we can use it
+          sudo -u builduser bash -c "
+            cd /tmp && \
+            git clone https://aur.archlinux.org/aurutils.git && \
+            cd aurutils && \
+            makepkg -si --noconfirm
+          "
 
       - name: Sync AUR Packages
         run: |
-          # Replace 'tornadoos-repo' with your actual .db file name if different
+          # Initialize the repo context
+          # Note: Ensure 'tornadoos-repo' matches your actual .db file name
           sudo -u builduser aur repo --add ./x86_64/tornadoos-repo.db.tar.gz
+          
+          # Sync and rebuild everything in the repo that has an AUR update
           sudo -u builduser aur sync -u -d tornadoos-repo --noview --noconfirm
 
       - name: Push Updates
         run: |
           git config --global user.name "TornadoOS Bot"
           git config --global user.email "ricki.clay@protonmail.com"
+          
           git add x86_64/
+          
           if git diff --staged --quiet; then
             echo "No changes to commit."
           else
