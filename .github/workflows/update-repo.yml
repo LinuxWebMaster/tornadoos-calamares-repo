@@ -12,7 +12,7 @@ jobs:
       options: --privileged
     steps:
       - name: Checkout Repo
-        uses: actions/checkout@v4
+        uses: actions/checkout@latest
         with:
           fetch-depth: 0
           persist-credentials: true
