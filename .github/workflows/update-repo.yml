@@ -20,13 +20,18 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          path: '.'  # Explicitly checkout to current directory
 
-      - name: Debug Files
+      - name: 🔍 Debug: Show Current Directory
         run: |
-          echo "Workspace: ${{ github.workspace }}"
-          ls -la "${{ github.workspace }}"
-          ls -la "${{ github.workspace }}/x86_64" || echo "x86_64 not found"
-          find "${{ github.workspace }}" -name "*.pkg.tar.zst" || echo "No packages found"
+          echo "=== CURRENT DIR: $(pwd) ==="
+          echo "=== GITHUB_WORKSPACE: ${{ github.workspace }} ==="
+          echo "=== FILES IN PWD ==="
+          ls -la
+          echo "=== x86_64 CONTENTS ==="
+          ls -la x86_64/ 2>/dev/null || echo "x86_64 not found in PWD"
+          echo "=== FIND PACKAGES ==="
+          find . -name "*.pkg.tar.zst" || echo "No packages found"
 
       - name: Setup
         run: |
@@ -39,29 +44,28 @@ jobs:
           sudo -u builder git clone https://aur.archlinux.org/aurutils.git /tmp/aurutils
           sudo -u builder bash -c "cd /tmp/aurutils && makepkg -si --noconfirm"
           
-          mkdir -p "${{ github.workspace }}/x86_64"
-          printf "\n[tornadoos-repo]\nSigLevel = Optional TrustAll\nServer = file://%s/x86_64\n" "${{ github.workspace }}" >> /etc/pacman.conf
+          mkdir -p x86_64
+          printf "\n[tornadoos-repo]\nSigLevel = Optional TrustAll\nServer = file://$(pwd)/x86_64\n" >> /etc/pacman.conf
           
-          git config --global --add safe.directory "${{ github.workspace }}"
-          chown -R builduser:builduser "${{ github.workspace }}/x86_64" || true
+          git config --global --add safe.directory "$(pwd)"
+          chown -R builduser:builduser x86_64 || true
 
       - name: Build Database
         run: |
-          cd "${{ github.workspace }}/x86_64"
+          cd x86_64
           rm -f *.lck *.db* *.files*
           sudo chown -R builduser:builduser .
           
           if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
             sudo -u builduser repo-add tornadoos-repo.db.tar.gz *.pkg.tar.zst
           else
-            echo "No packages found!"
+            echo "No packages found in x86_64/"
             ls -la
             exit 1
           fi
 
       - name: Push
         run: |
-          cd "${{ github.workspace }}"
           git config --global user.name "TornadoOS Bot"
           git config --global user.email "ricki.clay@protonmail.com"
           
