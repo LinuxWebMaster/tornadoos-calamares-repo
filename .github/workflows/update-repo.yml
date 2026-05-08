@@ -18,21 +18,30 @@ jobs:
 
       - name: Setup & Update
         run: |
-          # 🔑 CRITICAL FIX: Install aurutils HERE, before adding custom repo to pacman.conf
-          pacman -Sy --noconfirm git base-devel sudo aurutils
+          # 1. Install base dependencies (NO aurutils yet - it's in AUR!)
+          pacman -Sy --noconfirm git base-devel sudo
           
-          # NOW create directory and add repo to pacman.conf (NO pacman -Sy after this!)
+          # 2. Build and install aurutils FROM AUR manually
+          # Create temp build user
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+          
+          # Clone aurutils from AUR and install it
+          sudo -u builder git clone https://aur.archlinux.org/aurutils.git /tmp/aurutils
+          sudo -u builder bash -c "cd /tmp/aurutils && makepkg -si --noconfirm"
+          
+          # 3. NOW add custom repo to pacman.conf (after aurutils is installed)
           mkdir -p "${{ github.workspace }}/x86_64"
           printf "\n[tornadoos-repo]\nSigLevel = Optional TrustAll\nServer = file://%s/x86_64\n" "${{ github.workspace }}" >> /etc/pacman.conf
           
-          # Setup builduser
+          # 4. Setup builduser for package building
           useradd -m builduser
           echo "builduser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builduser
           
-          # Configure git
+          # 5. Configure git
           git config --global --add safe.directory "${{ github.workspace }}"
           
-          # Change ownership BUT preserve .git for root
+          # 6. Change ownership BUT preserve .git for root
           find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec chown -R builduser:builduser {} \;
 
       - name: Sync AUR Packages
