@@ -19,32 +19,43 @@ jobs:
       - name: Setup & Update
         run: |
           pacman -Syu --noconfirm git base-devel sudo
-          printf "\n[tornadoos-repo]\nSigLevel = Optional TrustAll\nServer = file://%s/x86_64\n" "$GITHUB_WORKSPACE" >> /etc/pacman.conf
+          printf "\n[tornadoos-repo]\nSigLevel = Optional TrustAll\nServer = file://%s/x86_64\n" "${{ github.workspace }}" >> /etc/pacman.conf
           pacman -Sy --noconfirm aurutils
           useradd -m builduser
           echo "builduser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builduser
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
-          chown -R builduser:builduser .
+          git config --global --add safe.directory "${{ github.workspace }}"
+          # Change ownership of files BUT preserve .git for root
+          find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec chown -R builduser:builduser {} \;
 
       - name: Sync AUR Packages
         run: |
-          sudo -u builduser git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          sudo -u builduser git config --global --add safe.directory "${{ github.workspace }}"
           sudo -u builduser aur repo -a ./x86_64/tornadoos-repo.db.tar.gz
           sudo -u builduser aur sync -u -d tornadoos-repo --noview --noconfirm
           rm -f x86_64/*.old
 
       - name: Push Updates
         run: |
-          cd $GITHUB_WORKSPACE
+          # Debug info
+          echo "=== Workspace: ${{ github.workspace }} ==="
+          pwd
+          ls -la "${{ github.workspace }}"
+          ls -la "${{ github.workspace }}/.git" || echo ".git not accessible"
           
-          # Change ownership back to root so git commands work
-          chown -R root:root "$GITHUB_WORKSPACE"
+          # Use GitHub expression (NOT shell variable)
+          cd "${{ github.workspace }}"
           
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Ensure .git is readable/writable
+          chmod -R u+rwX "${{ github.workspace }}/.git" 2>/dev/null || true
+          
+          git config --global --add safe.directory "${{ github.workspace }}"
           git config --global user.name "TornadoOS Bot"
           git config --global user.email "ricki.clay@protonmail.com"
           
           git add x86_64/
-          git commit -m "Automated AUR Update $(date +%Y-%m-%d)" || exit 0
-          
-          git push https://${{ secrets.TOKEN_NAME }}@github.com/LinuxWebMaster/tornadoos-repo.git HEAD:main
+          if git commit -m "Automated AUR Update $(date +%Y-%m-%d)"; then
+            # Make sure your secret is named TOKEN_NAME in repo Settings → Secrets
+            git push https://${{ secrets.TOKEN_NAME }}@github.com/LinuxWebMaster/tornadoos-repo.git HEAD:main
+          else
+            echo "✅ No changes to commit, skipping push."
+          fi
