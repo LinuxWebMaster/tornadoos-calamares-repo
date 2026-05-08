@@ -15,15 +15,19 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
-          # Ensure .git folder is preserved
           persist-credentials: true
+          # Force full checkout with .git folder
+          sparse-checkout: |
+            .github
+            x86_64
+            update-repo.sh
 
       - name: Debug After Checkout
         run: |
-          echo "=== After Checkout ==="
-          pwd
+          echo "=== Files after checkout ==="
           ls -la
-          ls -la .git 2>&1 | head -5 || echo ".git folder missing!"
+          ls -la .git 2>&1 || echo ".git is missing!"
+          git status 2>&1 || echo "git status failed"
 
       - name: Setup & Update
         run: |
@@ -47,19 +51,10 @@ jobs:
           # 5. Configure git safe directory
           git config --global --add safe.directory "${{ github.workspace }}"
           
-          # 6. Change ownership of files ONLY (not .git folder)
-          # Use a safer method that explicitly excludes .git
-          for item in *; do
-            if [ "$item" != ".git" ] && [ -e "$item" ]; then
-              chown -R builduser:builduser "$item"
-            fi
-          done
-
-      - name: Debug After Setup
-        run: |
-          echo "=== After Setup ==="
-          ls -la
-          ls -la .git 2>&1 | head -3 || echo ".git folder missing!"
+          # 6. Change ownership - be explicit about what we change
+          chown -R builduser:builduser x86_64 2>/dev/null || true
+          chown -R builduser:builduser update-repo.sh 2>/dev/null || true
+          # DON'T touch .git or .github folders
 
       - name: Sync AUR Packages
         run: |
@@ -77,15 +72,18 @@ jobs:
           pwd
           ls -la
           
-          # Verify .git exists
-          if [ ! -d "${{ github.workspace }}/.git" ]; then
-            echo "❌ ERROR: .git folder is missing!"
-            exit 1
-          fi
-          
           cd "${{ github.workspace }}"
           
-          # Ensure .git is accessible by root
+          # Re-initialize git if .git is missing
+          if [ ! -d ".git" ]; then
+            echo "⚠️ .git folder missing, re-initializing..."
+            git init
+            git remote add origin https://github.com/LinuxWebMaster/tornadoos-repo.git
+            git fetch origin main
+            git reset --hard origin/main
+          fi
+          
+          # Ensure .git is accessible
           chmod -R u+rwX .git
           
           git config --global --add safe.directory "${{ github.workspace }}"
