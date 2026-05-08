@@ -23,7 +23,6 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
-          lfs: true
 
       # 🔑 STEP 3: Install remaining dependencies
       - name: Setup Arch Environment
