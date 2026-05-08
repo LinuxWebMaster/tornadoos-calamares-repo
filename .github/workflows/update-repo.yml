@@ -1,4 +1,5 @@
 name: TornadoOS Repo Auto-Update
+
 on:
   schedule:
     - cron: '0 0 * * *'
@@ -10,89 +11,93 @@ jobs:
     container:
       image: archlinux:latest
       options: --privileged
+    
     steps:
+      # 🔑 FIX 1: Install git BEFORE checkout
+      - name: Install Git
+        run: pacman -Sy --noconfirm git
+        shell: bash
+
+      # 🔑 FIX 2: Full checkout (no sparse-checkout filtering)
       - name: Checkout Repo
-        uses: actions/checkout@v5
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
-          # Force full checkout with .git folder
-          sparse-checkout: |
-            .github
-            x86_64
-            update-repo.sh
 
-      - name: Debug After Checkout
+      # 🔍 Debug: Verify files are present
+      - name: Debug: Show Files
         run: |
-          echo "=== Files after checkout ==="
+          echo "=== PWD: $(pwd) ==="
+          echo "=== ROOT FILES ==="
           ls -la
-          ls -la .git 2>&1 || echo ".git is missing!"
-          git status 2>&1 || echo "git status failed"
+          echo "=== x86_64 CONTENTS ==="
+          ls -la x86_64/ 2>/dev/null || echo "x86_64 not found"
+          echo "=== FIND PACKAGES ==="
+          find . -name "*.pkg.tar.zst" || echo "No packages found"
 
       - name: Setup & Update
         run: |
-          # 1. Install base dependencies
-          pacman -Sy --noconfirm git base-devel sudo
+          # Install base-devel and sudo
+          pacman -Sy --noconfirm base-devel sudo
           
-          # 2. Build and install aurutils FROM AUR
+          # Build and install aurutils FROM AUR
           useradd -m builder
           echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
           sudo -u builder git clone https://aur.archlinux.org/aurutils.git /tmp/aurutils
           sudo -u builder bash -c "cd /tmp/aurutils && makepkg -si --noconfirm"
           
-          # 3. Add custom repo to pacman.conf
-          mkdir -p "${{ github.workspace }}/x86_64"
-          printf "\n[tornadoos-repo]\nSigLevel = Optional TrustAll\nServer = file://%s/x86_64\n" "${{ github.workspace }}" >> /etc/pacman.conf
+          # Add custom repo to pacman.conf (use pwd for reliability)
+          mkdir -p x86_64
+          printf "\n[tornadoos-repo]\nSigLevel = Optional TrustAll\nServer = file://$(pwd)/x86_64\n" >> /etc/pacman.conf
           
-          # 4. Setup builduser
+          # Setup builduser
           useradd -m builduser
           echo "builduser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builduser
           
-          # 5. Configure git safe directory
-          git config --global --add safe.directory "${{ github.workspace }}"
+          # Configure git
+          git config --global --add safe.directory "$(pwd)"
           
-          # 6. Change ownership - be explicit about what we change
+          # Change ownership
           chown -R builduser:builduser x86_64 2>/dev/null || true
           chown -R builduser:builduser update-repo.sh 2>/dev/null || true
-          # DON'T touch .git or .github folders
 
       - name: Sync AUR Packages
         run: |
-          sudo -u builduser git config --global --add safe.directory "${{ github.workspace }}"
+          sudo -u builduser git config --global --add safe.directory "$(pwd)"
           
-          # Rebuild database from existing packages
-          cd "${{ github.workspace }}/x86_64"
-          sudo -u builduser repo-add tornadoos-repo.db.tar.gz *.pkg.tar.zst 2>/dev/null || true
+          cd x86_64
           
-          rm -f *.old
+          # Clean old files
+          rm -f *.lck *.db* *.files*
+          
+          # Ensure permissions
+          sudo chown -R builduser:builduser .
+          
+          # Check for packages
+          if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
+            echo "✅ Found packages, building database..."
+            sudo -u builduser repo-add tornadoos-repo.db.tar.gz *.pkg.tar.zst
+          else
+            echo "❌ ERROR: No packages found!"
+            ls -la
+            exit 1
+          fi
+          
+          rm -f *.lck *.old
 
       - name: Push Updates
         run: |
-          echo "=== Before Push ==="
-          pwd
-          ls -la
-          
-          cd "${{ github.workspace }}"
-          
-          # Re-initialize git if .git is missing
-          if [ ! -d ".git" ]; then
-            echo "⚠️ .git folder missing, re-initializing..."
-            git init
-            git remote add origin https://github.com/LinuxWebMaster/tornadoos-repo.git
-            git fetch origin main
-            git reset --hard origin/main
-          fi
-          
-          # Ensure .git is accessible
-          chmod -R u+rwX .git
-          
-          git config --global --add safe.directory "${{ github.workspace }}"
           git config --global user.name "TornadoOS Bot"
           git config --global user.email "ricki.clay@protonmail.com"
           
-          git add x86_64/
+          cd x86_64
+          git add *.pkg.tar.zst *.db.tar.gz *.files.tar.gz 2>/dev/null || true
+          git rm -f *.db *.files *.lck 2>/dev/null || true
+          cd ..
+          
           if git commit -m "Automated AUR Update $(date +%Y-%m-%d)"; then
             git push https://${{ secrets.TOKEN_NAME }}@github.com/LinuxWebMaster/tornadoos-repo.git HEAD:main
           else
-            echo "✅ No changes to commit, skipping push."
+            echo "✅ No changes to commit."
           fi
