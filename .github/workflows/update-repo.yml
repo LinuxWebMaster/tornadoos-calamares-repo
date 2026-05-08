@@ -46,19 +46,19 @@ jobs:
 
       - name: Push Updates
         run: |
-          # Move to the workspace explicitly
-          cd $GITHUB_WORKSPACE
+          # Use the absolute internal path for GitHub Actions containers
+          cd /github/workspace
           
-          # Force git to trust the directory again just in case
-          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          # Fix ownership for the entire directory so Git can see the .git folder
+          git config --global --add safe.directory /github/workspace
           
           git config --global user.name "TornadoOS Bot"
           git config --global user.email "ricki.clay@protonmail.com"
           
           git add x86_64/
           
-          # Only commit if changes exist
+          # Commit only if there are new packages
           git commit -m "Automated AUR Update $(date +%Y-%m-%d)" || exit 0
           
-          # Push using the token secret
+          # Push using the secret token
           git push https://x-access-token:${{ secrets.GH_PAT }}@github.com/${{ github.repository }}.git HEAD:main
