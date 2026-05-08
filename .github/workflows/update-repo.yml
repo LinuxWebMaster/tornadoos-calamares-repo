@@ -1,11 +1,10 @@
 name: TornadoOS Repo Auto-Update
 on:
   schedule:
-    - cron: '0 0 * * *' # Midnight daily
-  workflow_dispatch:      # Manual trigger
+    - cron: '0 0 * * *'
+  workflow_dispatch:
 
 env:
-  # This fixes the Node.js deprecation warning
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
 
 jobs:
@@ -20,43 +19,42 @@ jobs:
 
       - name: Setup Environment
         run: |
-          # Install official base tools
           pacman -Syu --noconfirm git base-devel sudo
-          
-          # Setup builduser (makepkg cannot run as root)
           useradd -m builduser
           echo "builduser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builduser
-          
-          # Fix git ownership issues in containers
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          
+          # Register your repo in the container's pacman.conf
+          echo -e "\n[tornadoos-repo]\nSigLevel = Optional TrustAll\nServer = file://$GITHUB_WORKSPACE/x86_64" >> /etc/pacman.conf
+          
           chown -R builduser:builduser .
 
       - name: Install aurutils (Bootstrap)
         run: |
-          # Manually build aurutils from the AUR so we can use it
           sudo -u builduser bash -c "
             cd /tmp && \
-            git clone https://aur.archlinux.org/aurutils.git && \
+            git clone https://aur.archlinux.org/aurutils.git --depth 1 && \
             cd aurutils && \
             makepkg -si --noconfirm
           "
 
       - name: Sync AUR Packages
         run: |
-          # Initialize the repo context
-          # Note: Ensure 'tornadoos-repo' matches your actual .db file name
-          sudo -u builduser aur repo --add ./x86_64/tornadoos-repo.db.tar.gz
+          # Use the clean DB name from your folder
+          DB_NAME="tornadoos-repo"
           
-          # Sync and rebuild everything in the repo that has an AUR update
-          sudo -u builduser aur sync -u -d tornadoos-repo --noview --noconfirm
+          # Ensure the DB exists and is initialized for aurutils
+          sudo -u builduser aur repo --add ./x86_64/${DB_NAME}.db.tar.gz
+          
+          # Sync updates and clean up .old files automatically
+          sudo -u builduser aur sync -u -d ${DB_NAME} --noview --noconfirm
+          rm -f x86_64/*.old
 
       - name: Push Updates
         run: |
           git config --global user.name "TornadoOS Bot"
           git config --global user.email "ricki.clay@protonmail.com"
-          
           git add x86_64/
-          
           if git diff --staged --quiet; then
             echo "No changes to commit."
           else
