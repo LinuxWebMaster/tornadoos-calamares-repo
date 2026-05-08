@@ -16,7 +16,6 @@ jobs:
         with:
           fetch-depth: 0
           persist-credentials: true
-          # Force full checkout with .git folder
           sparse-checkout: |
             .github
             x86_64
@@ -54,15 +53,23 @@ jobs:
           # 6. Change ownership - be explicit about what we change
           chown -R builduser:builduser x86_64 2>/dev/null || true
           chown -R builduser:builduser update-repo.sh 2>/dev/null || true
-          # DON'T touch .git or .github folders
 
       - name: Sync AUR Packages
         run: |
           sudo -u builduser git config --global --add safe.directory "${{ github.workspace }}"
           
-          # Rebuild database from existing packages
           cd "${{ github.workspace }}/x86_64"
-          sudo -u builduser repo-add tornadoos-repo.db.tar.gz *.pkg.tar.zst 2>/dev/null || true
+          
+          # 🔑 Clean ALL old database files first
+          rm -f tornadoos-repo.db tornadoos-repo.db.tar.gz tornadoos-repo.files tornadoos-repo.files.tar.gz
+          
+          # Rebuild database (creates .db.tar.gz format)
+          sudo -u builduser repo-add tornadoos-repo.db.tar.gz *.pkg.tar.zst
+          
+          # Verify the database is valid
+          echo "=== Database verification ==="
+          file tornadoos-repo.db.tar.gz
+          tar -tzf tornadoos-repo.db.tar.gz | head -3
           
           rm -f *.old
 
@@ -70,7 +77,7 @@ jobs:
         run: |
           echo "=== Before Push ==="
           pwd
-          ls -la
+          ls -la "${{ github.workspace }}/x86_64"
           
           cd "${{ github.workspace }}"
           
@@ -90,7 +97,12 @@ jobs:
           git config --global user.name "TornadoOS Bot"
           git config --global user.email "ricki.clay@protonmail.com"
           
-          git add x86_64/
+          # 🔑 CRITICAL: Only add specific files, NOT uncompressed .db
+          cd x86_64
+          git add *.pkg.tar.zst tornadoos-repo.db.tar.gz tornadoos-repo.files.tar.gz
+          git rm -f tornadoos-repo.db tornadoos-repo.files 2>/dev/null || true
+          cd ..
+          
           if git commit -m "Automated AUR Update $(date +%Y-%m-%d)"; then
             git push https://${{ secrets.TOKEN_NAME }}@github.com/LinuxWebMaster/tornadoos-repo.git HEAD:main
           else
