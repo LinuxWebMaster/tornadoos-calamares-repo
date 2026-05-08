@@ -15,6 +15,15 @@ jobs:
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+          # Ensure .git folder is preserved
+          persist-credentials: true
+
+      - name: Debug After Checkout
+        run: |
+          echo "=== After Checkout ==="
+          pwd
+          ls -la
+          ls -la .git 2>&1 | head -5 || echo ".git folder missing!"
 
       - name: Setup & Update
         run: |
@@ -35,11 +44,22 @@ jobs:
           useradd -m builduser
           echo "builduser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builduser
           
-          # 5. Configure git
+          # 5. Configure git safe directory
           git config --global --add safe.directory "${{ github.workspace }}"
           
-          # 6. Change ownership BUT preserve .git
-          find . -mindepth 1 -maxdepth 1 ! -name '.git' -exec chown -R builduser:builduser {} \;
+          # 6. Change ownership of files ONLY (not .git folder)
+          # Use a safer method that explicitly excludes .git
+          for item in *; do
+            if [ "$item" != ".git" ] && [ -e "$item" ]; then
+              chown -R builduser:builduser "$item"
+            fi
+          done
+
+      - name: Debug After Setup
+        run: |
+          echo "=== After Setup ==="
+          ls -la
+          ls -la .git 2>&1 | head -3 || echo ".git folder missing!"
 
       - name: Sync AUR Packages
         run: |
@@ -53,13 +73,20 @@ jobs:
 
       - name: Push Updates
         run: |
-          echo "=== Workspace: ${{ github.workspace }} ==="
+          echo "=== Before Push ==="
           pwd
-          ls -la "${{ github.workspace }}"
+          ls -la
+          
+          # Verify .git exists
+          if [ ! -d "${{ github.workspace }}/.git" ]; then
+            echo "❌ ERROR: .git folder is missing!"
+            exit 1
+          fi
           
           cd "${{ github.workspace }}"
           
-          chmod -R u+rwX "${{ github.workspace }}/.git" 2>/dev/null || true
+          # Ensure .git is accessible by root
+          chmod -R u+rwX .git
           
           git config --global --add safe.directory "${{ github.workspace }}"
           git config --global user.name "TornadoOS Bot"
