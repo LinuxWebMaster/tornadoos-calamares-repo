@@ -1,11 +1,93 @@
-name: TornadoOS Auto-Update
+name: TornadoOS Repo Auto-Update
 
 on:
+  schedule:
+    - cron: '0 0 * * *'
   workflow_dispatch:
 
 jobs:
-  test:
+  update:
     runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    
     steps:
-      - name: Hello
-        run: echo "✅ Workflow is working!"
+      # 🔑 Install git BEFORE checkout
+      - name: Install Git
+        run: pacman -Sy --noconfirm git
+        shell: bash
+
+      # Full checkout (no sparse-checkout)
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          persist-credentials: true
+
+      # Debug: Verify files
+      - name: Debug: Show Files
+        run: |
+          echo "=== PWD: $(pwd) ==="
+          ls -la
+          echo "=== x86_64 CONTENTS ==="
+          ls -la x86_64/ 2>/dev/null || echo "x86_64 not found"
+          echo "=== FIND PACKAGES ==="
+          find . -name "*.pkg.tar.zst" || echo "No packages found"
+
+      # Setup environment
+      - name: Setup & Update
+        run: |
+          pacman -Sy --noconfirm base-devel sudo
+          
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+          sudo -u builder git clone https://aur.archlinux.org/aurutils.git /tmp/aurutils
+          sudo -u builder bash -c "cd /tmp/aurutils && makepkg -si --noconfirm"
+          
+          mkdir -p x86_64
+          printf "\n[tornadoos-repo]\nSigLevel = Optional TrustAll\nServer = file://$(pwd)/x86_64\n" >> /etc/pacman.conf
+          
+          useradd -m builduser
+          echo "builduser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builduser
+          
+          git config --global --add safe.directory "$(pwd)"
+          chown -R builduser:builduser x86_64 2>/dev/null || true
+          chown -R builduser:builduser update-repo.sh 2>/dev/null || true
+
+      # Build database
+      - name: Sync AUR Packages
+        run: |
+          sudo -u builduser git config --global --add safe.directory "$(pwd)"
+          
+          cd x86_64
+          rm -f *.lck *.db* *.files*
+          sudo chown -R builduser:builduser .
+          
+          if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
+            echo "✅ Found packages, building database..."
+            sudo -u builduser repo-add tornadoos-repo.db.tar.gz *.pkg.tar.zst
+          else
+            echo "❌ ERROR: No packages found!"
+            ls -la
+            exit 1
+          fi
+          
+          rm -f *.lck *.old
+
+      # Push changes
+      - name: Push Updates
+        run: |
+          git config --global user.name "TornadoOS Bot"
+          git config --global user.email "ricki.clay@protonmail.com"
+          
+          cd x86_64
+          git add *.pkg.tar.zst *.db.tar.gz *.files.tar.gz 2>/dev/null || true
+          git rm -f *.db *.files *.lck 2>/dev/null || true
+          cd ..
+          
+          if git commit -m "Automated AUR Update $(date +%Y-%m-%d)"; then
+            git push https://${{ secrets.TOKEN_NAME }}@github.com/LinuxWebMaster/tornadoos-repo.git HEAD:main
+          else
+            echo "✅ No changes to commit."
+          fi
