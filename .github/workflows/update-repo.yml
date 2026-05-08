@@ -6,49 +6,60 @@ on:
 
 jobs:
   update:
-    runs-on: ubuntu-latest  # Run checkout on Ubuntu (has git)
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
     steps:
-      # ✅ Checkout on Ubuntu host (git is available)
+      # 🔑 STEP 1: Install git FIRST (before checkout)
+      - name: Install Git in Container
+        run: |
+          pacman -Sy --noconfirm git
+        shell: bash
+
+      # ✅ STEP 2: Now checkout works (git is installed)
       - name: Checkout Repo
-        uses: actions/checkout@v4  # Use v4 for better compatibility
+        uses: actions/checkout@v4
         with:
           fetch-depth: 0
           persist-credentials: true
           lfs: true
 
-      # ✅ Now run everything else in Arch container
-      - name: Setup & Update in Arch
+      # 🔑 STEP 3: Install remaining dependencies
+      - name: Setup Arch Environment
         run: |
-          # Install dependencies
-          sudo pacman -Sy --noconfirm git base-devel sudo
+          # Install base-devel and sudo
+          pacman -Sy --noconfirm base-devel sudo
           
-          # Build aurutils
-          sudo useradd -m builder
-          echo "builder ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/builder
+          # Build and install aurutils
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
           sudo -u builder git clone https://aur.archlinux.org/aurutils.git /tmp/aurutils
           sudo -u builder bash -c "cd /tmp/aurutils && makepkg -si --noconfirm"
           
-          # Add custom repo
-          sudo mkdir -p "${{ github.workspace }}/x86_64"
-          printf "\n[tornadoos-repo]\nSigLevel = Optional TrustAll\nServer = file://%s/x86_64\n" "${{ github.workspace }}" | sudo tee -a /etc/pacman.conf
+          # Add custom repo to pacman.conf
+          mkdir -p "${{ github.workspace }}/x86_64"
+          printf "\n[tornadoos-repo]\nSigLevel = Optional TrustAll\nServer = file://%s/x86_64\n" "${{ github.workspace }}" >> /etc/pacman.conf
           
           # Setup builduser
-          sudo useradd -m builduser
-          echo "builduser ALL=(ALL) NOPASSWD: ALL" | sudo tee /etc/sudoers.d/builduser
+          useradd -m builduser
+          echo "builduser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builduser
           
           # Configure git
           git config --global --add safe.directory "${{ github.workspace }}"
           
           # Change ownership
-          sudo chown -R builduser:builduser x86_64 2>/dev/null || true
-          sudo chown -R builduser:builduser update-repo.sh 2>/dev/null || true
-          
+          chown -R builduser:builduser x86_64 2>/dev/null || true
+          chown -R builduser:builduser update-repo.sh 2>/dev/null || true
+
       - name: Sync AUR Packages
         run: |
+          sudo -u builduser git config --global --add safe.directory "${{ github.workspace }}"
+          
           cd "${{ github.workspace }}/x86_64"
           
-          # Remove old files
-          sudo rm -f *.lck tornadoos-repo.db* tornadoos-repo.files*
+          # Clean old files
+          rm -f *.lck tornadoos-repo.db* tornadoos-repo.files*
           
           # Ensure permissions
           sudo chown -R builduser:builduser .
@@ -67,12 +78,22 @@ jobs:
             exit 1
           fi
           
-          sudo rm -f *.lck *.old
-          
+          rm -f *.lck *.old
+
       - name: Push Updates
         run: |
           cd "${{ github.workspace }}"
           
+          if [ ! -d ".git" ]; then
+            echo "⚠️ .git missing, re-initializing..."
+            git init
+            git remote add origin https://github.com/LinuxWebMaster/tornadoos-repo.git
+            git fetch origin main
+            git reset --hard origin/main
+          fi
+          
+          chmod -R u+rwX .git
+          git config --global --add safe.directory "${{ github.workspace }}"
           git config --global user.name "TornadoOS Bot"
           git config --global user.email "ricki.clay@protonmail.com"
           
