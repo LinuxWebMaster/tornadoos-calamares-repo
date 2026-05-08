@@ -19,6 +19,13 @@ jobs:
       - name: Setup & Update
         run: |
           pacman -Syu --noconfirm git base-devel sudo
+          printf "\n[tornadoos-repo]\nSigLevel = Optional TrustAll\nServer = file://%s/x86_64\n" "$GITHUB_WORKSPACE" >> /etc/pacman.conf
+          pacman -Sy --noconfirm aurutils
+          useradd -m builduser
+          echo "builduser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builduser
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          chown -R builduser:builduser .
+
       - name: Sync AUR Packages
         run: |
           sudo -u builduser git config --global --add safe.directory "$GITHUB_WORKSPACE"
