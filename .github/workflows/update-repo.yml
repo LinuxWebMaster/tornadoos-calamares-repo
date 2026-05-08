@@ -1,0 +1,75 @@
+name: TornadoOS Repo Auto-Update
+
+on:
+  schedule:
+    - cron: '0 0 * * *'
+  workflow_dispatch:
+
+jobs:
+  update:
+    runs-on: ubuntu-latest
+    container:
+      image: archlinux:latest
+      options: --privileged
+    
+    steps:
+      - name: Install Git
+        run: pacman -Sy --noconfirm git
+
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Debug Files
+        run: |
+          echo "Workspace: ${{ github.workspace }}"
+          ls -la "${{ github.workspace }}"
+          ls -la "${{ github.workspace }}/x86_64" || echo "x86_64 not found"
+          find "${{ github.workspace }}" -name "*.pkg.tar.zst" || echo "No packages found"
+
+      - name: Setup
+        run: |
+          pacman -Sy --noconfirm base-devel sudo
+          useradd -m builder
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
+          useradd -m builduser
+          echo "builduser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builduser
+          
+          sudo -u builder git clone https://aur.archlinux.org/aurutils.git /tmp/aurutils
+          sudo -u builder bash -c "cd /tmp/aurutils && makepkg -si --noconfirm"
+          
+          mkdir -p "${{ github.workspace }}/x86_64"
+          printf "\n[tornadoos-repo]\nSigLevel = Optional TrustAll\nServer = file://%s/x86_64\n" "${{ github.workspace }}" >> /etc/pacman.conf
+          
+          git config --global --add safe.directory "${{ github.workspace }}"
+          chown -R builduser:builduser "${{ github.workspace }}/x86_64" || true
+
+      - name: Build Database
+        run: |
+          cd "${{ github.workspace }}/x86_64"
+          rm -f *.lck *.db* *.files*
+          sudo chown -R builduser:builduser .
+          
+          if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
+            sudo -u builduser repo-add tornadoos-repo.db.tar.gz *.pkg.tar.zst
+          else
+            echo "No packages found!"
+            ls -la
+            exit 1
+          fi
+
+      - name: Push
+        run: |
+          cd "${{ github.workspace }}"
+          git config --global user.name "TornadoOS Bot"
+          git config --global user.email "ricki.clay@protonmail.com"
+          
+          cd x86_64
+          git add *.pkg.tar.zst *.db.tar.gz *.files.tar.gz 2>/dev/null || true
+          git rm -f *.db *.files *.lck 2>/dev/null || true
+          cd ..
+          
+          if git commit -m "Auto-update $(date +%Y-%m-%d)"; then
+            git push https://${{ secrets.TOKEN_NAME }}@github.com/LinuxWebMaster/tornadoos-repo.git HEAD:main
+          fi
