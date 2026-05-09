@@ -1,9 +1,10 @@
+---
 name: TornadoOS Repo Auto-Update
 
 on:
   schedule:
     - cron: '0 0 * * *'
-  workflow_dispatch:
+  workflow_dispatch: true
 
 jobs:
   update:
@@ -12,9 +13,8 @@ jobs:
       image: archlinux:latest
       options: --privileged
     env:
-      # Opt into Node.js 24 for future compatibility
       FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
-    
+
     steps:
       - name: "Install Git"
         run: pacman -Sy --noconfirm git
@@ -38,63 +38,69 @@ jobs:
       - name: "Setup & Update"
         run: |
           pacman -Sy --noconfirm base-devel sudo
-          
+
           useradd -m builder
-          echo "builder ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builder
-          sudo -u builder git clone https://aur.archlinux.org/aurutils.git /tmp/aurutils
-          sudo -u builder bash -c "cd /tmp/aurutils && makepkg -si --noconfirm"
-          
+          echo "builder ALL=(ALL) NOPASSWD: ALL" > \
+            /etc/sudoers.d/builder
+          sudo -u builder git clone \
+            https://aur.archlinux.org/aurutils.git /tmp/aurutils
+          sudo -u builder bash -c \
+            "cd /tmp/aurutils && makepkg -si --noconfirm"
+
           mkdir -p x86_64
-          printf "\n[tornadoos-repo]\nSigLevel = Optional TrustAll\nServer = file://$(pwd)/x86_64\n" >> /etc/pacman.conf
-          
+          printf "\n[tornadoos-repo]\n" >> /etc/pacman.conf
+          printf "SigLevel = Optional TrustAll\n" >> /etc/pacman.conf
+          printf "Server = file://$(pwd)/x86_64\n" >> /etc/pacman.conf
+
           useradd -m builduser
-          echo "builduser ALL=(ALL) NOPASSWD: ALL" > /etc/sudoers.d/builduser
-          
+          echo "builduser ALL=(ALL) NOPASSWD: ALL" > \
+            /etc/sudoers.d/builduser
+
           git config --global --add safe.directory "$(pwd)"
           chown -R builduser:builduser x86_64 2>/dev/null || true
           chown -R builduser:builduser update-repo.sh 2>/dev/null || true
 
-      # ✅ FIX: Properly indented under steps: (6 spaces before -)
       - name: "Sync AUR Packages"
         run: |
-          sudo -u builduser git config --global --add safe.directory "$(pwd)"
-          
+          sudo -u builduser git config --global \
+            --add safe.directory "$(pwd)"
+
           cd x86_64
           rm -f *.lck *.db* *.files*
           sudo chown -R builduser:builduser .
-          
+
           if ls *.pkg.tar.zst 1> /dev/null 2>&1; then
-            echo "✅ Found packages, building database..."
-            sudo -u builduser repo-add tornadoos-repo.db.tar.gz *.pkg.tar.zst
+            echo "Found packages, building database..."
+            sudo -u builduser repo-add \
+              tornadoos-repo.db.tar.gz *.pkg.tar.zst
           else
-            echo "❌ ERROR: No packages found!"
+            echo "ERROR: No packages found!"
             ls -la
             exit 1
           fi
-          
+
           rm -f *.lck *.old
 
-      # ✅ FIX: Properly indented under steps: (6 spaces before -)
       - name: "Push Updates"
         run: |
           git config --global user.name "TornadoOS Bot"
           git config --global user.email "ricki.clay@protonmail.com"
-          
+
           cd x86_64
-          
-          # Add package files
+
           git add *.pkg.tar.zst 2>/dev/null || true
-          
-          # ✅ ONLY add compressed database files
-          git add tornadoos-repo.db.tar.gz tornadoos-repo.files.tar.gz 2>/dev/null || true
-          
-          # ❌ Explicitly remove uncompressed files from git
-          git rm -f tornadoos-repo.db tornadoos-repo.files *.lck 2>/dev/null || true
-          
+          git add tornadoos-repo.db.tar.gz \
+            tornadoos-repo.files.tar.gz 2>/dev/null || true
+          git rm -f tornadoos-repo.db tornadoos-repo.files \
+            *.lck 2>/dev/null || true
+
           cd ..
-          
+
+          REPO_URL="https://LinuxWebMaster:${{ secrets.GH_PAT }}"
+          REPO_URL="${REPO_URL}@github.com/LinuxWebMaster/tornadoos-repo.git"
+
           if git commit -m "Automated AUR Update $(date +%Y-%m-%d)"; then
-            git push https://LinuxWebMaster:${{ secrets.GH_PAT }}@github.com/LinuxWebMaster/tornadoos-repo.git HEAD:main
+            git push "$REPO_URL" HEAD:main
           else
-            echo "✅ No changes to commit."
+            echo "No changes to commit."
           fi
