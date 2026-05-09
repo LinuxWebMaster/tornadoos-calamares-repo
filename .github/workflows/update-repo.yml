@@ -39,6 +39,9 @@ jobs:
 
       - name: Commit and Push
         run: |
+          # ✅ Fix: Tell git this directory is safe to use
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
+          
           git config --global user.name "TornadoOS Bot"
           git config --global user.email "ricki.clay@protonmail.com"
           
