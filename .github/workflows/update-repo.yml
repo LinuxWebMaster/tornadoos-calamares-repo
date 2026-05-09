@@ -35,7 +35,7 @@ jobs:
           
           # Sync packages into x86_64/
           cd x86_64
-          sudo -u builder aur sync --database tornadoos-repo --root . grub-customizer preload calamares cfs-zen-tweaks 
+          sudo -u builder aur sync --database tornadoos-repo --root . grub-customizer preload calamares cfs-zen-tweaks tlp-git 
 
       - name: Commit and Push
         run: |
